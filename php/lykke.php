@@ -9,21 +9,54 @@ use Exception; // a common import
 
 class lykke extends Exchange {
 
-    public function describe () {
-        return array_replace_recursive(parent::describe (), array(
+    public function describe() {
+        return $this->deep_extend(parent::describe (), array(
             'id' => 'lykke',
             'name' => 'Lykke',
             'countries' => array( 'CH' ),
-            'version' => 'v1',
+            'version' => 'v1', // v2 - https://lykkecity.github.io/Trading-API/
             'rateLimit' => 200,
             'has' => array(
-                'CORS' => false,
-                'fetchOHLCV' => false,
-                'fetchTrades' => true,
-                'fetchOpenOrders' => true,
+                'CORS' => null,
+                'spot' => true,
+                'margin' => false,
+                'swap' => false,
+                'future' => false,
+                'option' => false,
+                'cancelAllOrders' => true,
+                'cancelOrder' => true,
+                'createOrder' => true,
+                'fetchBalance' => true,
                 'fetchClosedOrders' => true,
+                'fetchFundingHistory' => false,
+                'fetchFundingRate' => false,
+                'fetchFundingRateHistory' => false,
+                'fetchFundingRates' => false,
+                'fetchIndexOHLCV' => false,
+                'fetchMarkets' => true,
+                'fetchMarkOHLCV' => false,
+                'fetchMyTrades' => true,
+                'fetchOHLCV' => 'emulated',
+                'fetchOpenOrders' => true,
                 'fetchOrder' => true,
+                'fetchOrderBook' => true,
                 'fetchOrders' => true,
+                'fetchPremiumIndexOHLCV' => false,
+                'fetchTicker' => true,
+                'fetchTrades' => true,
+            ),
+            'timeframes' => array(
+                '1m' => 'Minute',
+                '5m' => 'Min5',
+                '15m' => 'Min15',
+                '30m' => 'Min30',
+                '1h' => 'Hour',
+                '4h' => 'Hour4',
+                '6h' => 'Hour6',
+                '12h' => 'Hour12',
+                '1d' => 'Day',
+                '1w' => 'Week',
+                '1M' => 'Month',
             ),
             'requiredCredentials' => array(
                 'apiKey' => true,
@@ -51,8 +84,26 @@ class lykke extends Exchange {
             'api' => array(
                 'mobile' => array(
                     'get' => array(
+                        'AssetPairs/rate',
+                        'AssetPairs/rate/{assetPairId}',
+                        'AssetPairs/dictionary/{market}',
+                        'Assets/dictionary',
+                        'Candles/history/{market}/available',
+                        'Candles/history/{market}/{assetPair}/{period}/{type}/{from}/{to}',
+                        'Company/ownershipStructure',
+                        'Company/registrationsCount',
+                        'IsAlive',
+                        'Market',
                         'Market/{market}',
+                        'Market/capitalization/{market}',
+                        'OrderBook',
+                        'OrderBook/{assetPairId}',
                         'Trades/{AssetPairId}',
+                        'Trades/Last/{assetPair}/{n}',
+                    ),
+                    'post' => array(
+                        'AssetPairs/rate/history',
+                        'AssetPairs/rate/history/{assetPairId}',
                     ),
                 ),
                 'public' => array(
@@ -69,11 +120,20 @@ class lykke extends Exchange {
                         'Orders',
                         'Orders/{id}',
                         'Wallets',
+                        'History/trades',
                     ),
                     'post' => array(
                         'Orders/limit',
                         'Orders/market',
                         'Orders/{id}/Cancel',
+                        'Orders/v2/market',
+                        'Orders/v2/limit',
+                        'Orders/stoplimit',
+                        'Orders/bulk',
+                    ),
+                    'delete' => array(
+                        'Orders',
+                        'Orders/{id}',
                     ),
                 ),
             ),
@@ -96,59 +156,83 @@ class lykke extends Exchange {
                 ),
             ),
             'commonCurrencies' => array(
+                'CAN' => 'CanYaCoin',
                 'XPD' => 'Lykke XPD',
             ),
         ));
     }
 
-    public function parse_trade ($trade, $market) {
+    public function parse_trade($trade, $market) {
         //
         //  public fetchTrades
         //
         //   {
-        //     "$id" => "d5983ab8-e9ec-48c9-bdd0-1b18f8e80a71",
+        //     "id" => "d5983ab8-e9ec-48c9-bdd0-1b18f8e80a71",
         //     "assetPairId" => "BTCUSD",
         //     "dateTime" => "2019-05-15T06:52:02.147Z",
         //     "volume" => 0.00019681,
         //     "index" => 0,
-        //     "$price" => 8023.333,
+        //     "price" => 8023.333,
         //     "action" => "Buy"
         //   }
         //
-        $symbol = null;
-        if ($market === null) {
-            $marketId = $this->safe_string($trade, 'AssetPairId');
-            $market = $this->safe_value($this->markets_by_id, $marketId);
-        }
-        if ($market) {
-            $symbol = $market['symbol'];
-        }
-        $id = $this->safe_string($trade, 'id');
-        $timestamp = $this->parse8601 ($this->safe_string($trade, 'dateTime'));
+        //  private fetchMyTrades
+        //     array(
+        //         Id => '3500b83c-9963-4349-b3ee-b3e503073cea',
+        //         OrderId => '83b50feb-8615-4dc6-b606-8a4168ecd708',
+        //         DateTime => '2020-05-19T11:17:39.31+00:00',
+        //         Timestamp => '2020-05-19T11:17:39.31+00:00',
+        //         State => null,
+        //         Amount => -0.004,
+        //         BaseVolume => -0.004,
+        //         QuotingVolume => 39.3898,
+        //         Asset => 'BTC',
+        //         BaseAssetId => 'BTC',
+        //         QuotingAssetId => 'USD',
+        //         AssetPair => 'BTCUSD',
+        //         AssetPairId => 'BTCUSD',
+        //         Price => 9847.427,
+        //         Fee => array( Amount => null, Type => 'Unknown', FeeAssetId => null )
+        //     ),
+        $marketId = $this->safe_string($trade, 'AssetPairId');
+        $symbol = $this->safe_symbol($marketId, $market);
+        $id = $this->safe_string_2($trade, 'id', 'Id');
+        $orderId = $this->safe_string($trade, 'OrderId');
+        $timestamp = $this->parse8601($this->safe_string_2($trade, 'dateTime', 'DateTime'));
+        $priceString = $this->safe_string_2($trade, 'price', 'Price');
+        $amountString = $this->safe_string_2($trade, 'volume', 'Amount');
         $side = $this->safe_string_lower($trade, 'action');
-        $price = $this->safe_float($trade, 'price');
-        $amount = $this->safe_float($trade, 'volume');
-        $cost = $price * $amount;
+        if ($side === null) {
+            $side = ($amountString[0] === '-') ? 'sell' : 'buy';
+        }
+        $amountString = Precise::string_abs($amountString);
+        $price = $this->parse_number($priceString);
+        $amount = $this->parse_number($amountString);
+        $cost = $this->parse_number(Precise::string_mul($priceString, $amountString));
+        $fee = array(
+            'cost' => 0, // There are no fees for trading. https://www.lykke.com/wallet-fees-and-limits/
+            'currency' => $market['quote'],
+        );
         return array(
             'id' => $id,
             'info' => $trade,
             'timestamp' => $timestamp,
-            'datetime' => $this->iso8601 ($timestamp),
+            'datetime' => $this->iso8601($timestamp),
             'symbol' => $symbol,
             'type' => null,
-            'order' => null,
+            'order' => $orderId,
             'side' => $side,
             'takerOrMaker' => null,
             'price' => $price,
             'amount' => $amount,
             'cost' => $cost,
-            'fee' => null,
+            'fee' => $fee,
         );
     }
 
-    public function fetch_trades ($symbol, $since = null, $limit = null, $params = array ()) {
+    public function fetch_trades($symbol, $since = null, $limit = null, $params = array ()) {
         $this->load_markets();
-        $market = $this->market ($symbol);
+        $market = $this->market($symbol);
         if ($limit === null) {
             $limit = 100;
         }
@@ -161,66 +245,124 @@ class lykke extends Exchange {
         return $this->parse_trades($response, $market, $since, $limit);
     }
 
-    public function fetch_balance ($params = array ()) {
+    public function fetch_my_trades($symbol = null, $since = null, $limit = null, $params = array ()) {
         $this->load_markets();
-        $response = $this->privateGetWallets ($params);
+        $request = array();
+        $market = null;
+        if ($limit !== null) {
+            $request['take'] = $limit; // How many maximum items have to be returned, max 1000 default 100.
+        }
+        if ($symbol !== null) {
+            $market = $this->market($symbol);
+            $request['assetPairId'] = $market['id'];
+        }
+        $response = $this->privateGetHistoryTrades (array_merge($request, $params));
+        return $this->parse_trades($response, $market, $since, $limit);
+    }
+
+    public function parse_balance($response) {
         $result = array( 'info' => $response );
         for ($i = 0; $i < count($response); $i++) {
             $balance = $response[$i];
             $currencyId = $this->safe_string($balance, 'AssetId');
             $code = $this->safe_currency_code($currencyId);
-            $account = $this->account ();
-            $account['total'] = $this->safe_float($balance, 'Balance');
-            $account['used'] = $this->safe_float($balance, 'Reserved');
+            $account = $this->account();
+            $account['total'] = $this->safe_string($balance, 'Balance');
+            $account['used'] = $this->safe_string($balance, 'Reserved');
             $result[$code] = $account;
         }
-        return $this->parse_balance($result);
+        return $this->safe_balance($result);
     }
 
-    public function cancel_order ($id, $symbol = null, $params = array ()) {
-        return $this->privatePostOrdersIdCancel (array( 'id' => $id ));
-    }
-
-    public function create_order ($symbol, $type, $side, $amount, $price = null, $params = array ()) {
+    public function fetch_balance($params = array ()) {
         $this->load_markets();
-        $market = $this->market ($symbol);
+        $response = $this->privateGetWallets ($params);
+        return $this->parse_balance($response);
+    }
+
+    public function cancel_order($id, $symbol = null, $params = array ()) {
+        $request = array( 'id' => $id );
+        return $this->privateDeleteOrdersId (array_merge($request, $params));
+    }
+
+    public function cancel_all_orders($symbol = null, $params = array ()) {
+        $this->load_markets();
+        $request = array();
+        $market = null;
+        if ($symbol !== null) {
+            $market = $this->market($symbol);
+            $request['assetPairId'] = $market['id'];
+        }
+        return $this->privateDeleteOrders (array_merge($request, $params));
+    }
+
+    public function create_order($symbol, $type, $side, $amount, $price = null, $params = array ()) {
+        $this->load_markets();
+        $market = $this->market($symbol);
         $query = array(
             'AssetPairId' => $market['id'],
-            'OrderAction' => $this->capitalize ($side),
+            'OrderAction' => $this->capitalize($side),
             'Volume' => $amount,
+            'Asset' => $market['baseId'],
         );
-        if ($type === 'market') {
-            $query['Asset'] = ($side === 'buy') ? $market['base'] : $market['quote'];
-        } else if ($type === 'limit') {
+        if ($type === 'limit') {
             $query['Price'] = $price;
         }
-        $method = 'privatePostOrders' . $this->capitalize ($type);
+        $method = 'privatePostOrdersV2' . $this->capitalize($type);
         $result = $this->$method (array_merge($query, $params));
+        //
+        // $market
+        //
+        //     {
+        //         "Price" => 0
+        //     }
+        //
+        // limit
+        //
+        //     {
+        //         "Id":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        //     }
+        //
+        $id = $this->safe_string($result, 'Id');
+        $price = $this->safe_number($result, 'Price');
         return array(
-            'id' => null,
+            'id' => $id,
             'info' => $result,
+            'clientOrderId' => null,
+            'timestamp' => null,
+            'datetime' => null,
+            'lastTradeTimestamp' => null,
+            'symbol' => $symbol,
+            'type' => $type,
+            'side' => $side,
+            'price' => $price,
+            'amount' => $amount,
+            'cost' => null,
+            'average' => null,
+            'filled' => null,
+            'remaining' => null,
+            'status' => null,
+            'fee' => null,
+            'trades' => null,
         );
     }
 
-    public function fetch_markets ($params = array ()) {
+    public function fetch_markets($params = array ()) {
         $markets = $this->publicGetAssetPairs ();
         //
-        //     array( array(                Id => "AEBTC",
-        //                      Name => "AE/BTC",
-        //                  Accuracy =>  6,
-        //          InvertedAccuracy =>  8,
-        //               BaseAssetId => "6f75280b-a005-4016-a3d8-03dc644e8912",
+        //    array(
+        //        array(
+        //            Id => "AEBTC",
+        //            Name => "AE/BTC",
+        //            Accuracy =>  6,
+        //            InvertedAccuracy =>  8,
+        //            BaseAssetId => "6f75280b-a005-4016-a3d8-03dc644e8912",
         //            QuotingAssetId => "BTC",
-        //                 MinVolume =>  0.4,
-        //         MinInvertedVolume =>  0.0001                                 ),
-        //       {                Id => "AEETH",
-        //                      Name => "AE/ETH",
-        //                  Accuracy =>  6,
-        //          InvertedAccuracy =>  8,
-        //               BaseAssetId => "6f75280b-a005-4016-a3d8-03dc644e8912",
-        //            QuotingAssetId => "ETH",
-        //                 MinVolume =>  0.4,
-        //         MinInvertedVolume =>  0.001                                  } )
+        //            MinVolume =>  0.4,
+        //            MinInvertedVolume =>  0.0001
+        //        ),
+        //        ...
+        //    )
         //
         $result = array();
         for ($i = 0; $i < count($markets); $i++) {
@@ -230,54 +372,81 @@ class lykke extends Exchange {
             list($baseId, $quoteId) = explode('/', $name);
             $base = $this->safe_currency_code($baseId);
             $quote = $this->safe_currency_code($quoteId);
-            $symbol = $base . '/' . $quote;
-            $precision = array(
-                'amount' => $this->safe_integer($market, 'Accuracy'),
-                'price' => $this->safe_integer($market, 'InvertedAccuracy'),
-            );
+            $pricePrecision = $this->safe_string($market, 'Accuracy');
+            $priceLimit = $this->parse_precision($pricePrecision);
             $result[] = array(
                 'id' => $id,
-                'symbol' => $symbol,
+                'symbol' => $base . '/' . $quote,
                 'base' => $base,
                 'quote' => $quote,
+                'settle' => null,
+                'baseId' => null,
+                'quoteId' => null,
+                'settleId' => null,
+                'type' => 'spot',
+                'spot' => true,
+                'margin' => null,
+                'swap' => false,
+                'future' => false,
+                'option' => false,
                 'active' => true,
-                'info' => $market,
-                'precision' => $precision,
+                'contract' => false,
+                'linear' => null,
+                'inverse' => null,
+                'contractSize' => null,
+                'expiry' => null,
+                'expiryDatetime' => null,
+                'strike' => null,
+                'optionType' => null,
+                'precision' => array(
+                    'price' => intval($pricePrecision),
+                    'amount' => $this->safe_integer($market, 'InvertedAccuracy'),
+                ),
                 'limits' => array(
-                    'amount' => array(
-                        'min' => pow(10, -$precision['amount']),
-                        'max' => pow(10, $precision['amount']),
-                    ),
-                    'price' => array(
-                        'min' => pow(10, -$precision['price']),
-                        'max' => pow(10, $precision['price']),
-                    ),
-                    'cost' => array(
+                    'leverage' => array(
                         'min' => null,
                         'max' => null,
                     ),
+                    'amount' => array(
+                        'min' => $this->safe_number($market, 'MinVolume'),
+                        'max' => null,
+                    ),
+                    'price' => array(
+                        'min' => $this->parse_number($priceLimit),
+                        'max' => null,
+                    ),
+                    'cost' => array(
+                        'min' => $this->safe_number($market, 'MinInvertedVolume'),
+                        'max' => null,
+                    ),
                 ),
+                'info' => $market,
             );
         }
         return $result;
     }
 
-    public function parse_ticker ($ticker, $market = null) {
-        $timestamp = $this->milliseconds ();
-        $symbol = null;
-        if ($market) {
-            $symbol = $market['symbol'];
-        }
-        $close = $this->safe_float($ticker, 'lastPrice');
-        return array(
-            'symbol' => $symbol,
+    public function parse_ticker($ticker, $market = null) {
+        // {
+        //     "assetPair":"ADAUSD",
+        //     "volume24H":264.6398,
+        //     "lastPrice":1.29535,
+        //     "bid":1.28805,
+        //     "ask":1.29074
+        // }
+        $timestamp = $this->milliseconds();
+        $marketId = $this->safe_string($ticker, 'assetPair');
+        $market = $this->safe_market($marketId, $market);
+        $close = $this->safe_string($ticker, 'lastPrice');
+        return $this->safe_ticker(array(
+            'symbol' => $market['symbol'],
             'timestamp' => $timestamp,
-            'datetime' => $this->iso8601 ($timestamp),
+            'datetime' => $this->iso8601($timestamp),
             'high' => null,
             'low' => null,
-            'bid' => $this->safe_float($ticker, 'bid'),
+            'bid' => $this->safe_string($ticker, 'bid'),
             'bidVolume' => null,
-            'ask' => $this->safe_float($ticker, 'ask'),
+            'ask' => $this->safe_string($ticker, 'ask'),
             'askVolume' => null,
             'vwap' => null,
             'open' => null,
@@ -288,22 +457,29 @@ class lykke extends Exchange {
             'percentage' => null,
             'average' => null,
             'baseVolume' => null,
-            'quoteVolume' => $this->safe_float($ticker, 'volume24H'),
+            'quoteVolume' => $this->safe_string($ticker, 'volume24H'),
             'info' => $ticker,
-        );
+        ), $market, false);
     }
 
-    public function fetch_ticker ($symbol, $params = array ()) {
+    public function fetch_ticker($symbol, $params = array ()) {
         $this->load_markets();
-        $market = $this->market ($symbol);
+        $market = $this->market($symbol);
         $request = array(
             'market' => $market['id'],
         );
         $ticker = $this->mobileGetMarketMarket (array_merge($request, $params));
+        // {
+        //     "assetPair":"ADAUSD",
+        //     "volume24H":264.6398,
+        //     "lastPrice":1.29535,
+        //     "bid":1.28805,
+        //     "ask":1.29074
+        // }
         return $this->parse_ticker($ticker, $market);
     }
 
-    public function parse_order_status ($status) {
+    public function parse_order_status($status) {
         $statuses = array(
             'Open' => 'open',
             'Pending' => 'open',
@@ -313,54 +489,77 @@ class lykke extends Exchange {
             'Cancelled' => 'canceled',
             'Rejected' => 'rejected',
             'Replaced' => 'canceled',
+            'Placed' => 'open',
         );
         return $this->safe_string($statuses, $status, $status);
     }
 
-    public function parse_order ($order, $market = null) {
+    public function parse_order($order, $market = null) {
+        //
+        //     {
+        //         "Id" => "string",
+        //         "Status" => "Unknown",
+        //         "AssetPairId" => "string",
+        //         "Volume" => 0,
+        //         "Price" => 0,
+        //         "RemainingVolume" => 0,
+        //         "LastMatchTime" => "2020-03-26T20:58:50.710Z",
+        //         "CreatedAt" => "2020-03-26T20:58:50.710Z",
+        //         "Type" => "Unknown",
+        //         "LowerLimitPrice" => 0,
+        //         "LowerPrice" => 0,
+        //         "UpperLimitPrice" => 0,
+        //         "UpperPrice" => 0
+        //     }
+        //
         $status = $this->parse_order_status($this->safe_string($order, 'Status'));
-        $symbol = null;
-        if ($market === null) {
-            $marketId = $this->safe_string($order, 'AssetPairId');
-            $market = $this->safe_value($this->markets_by_id, $marketId);
-        }
-        if ($market) {
-            $symbol = $market['symbol'];
-        }
-        $lastTradeTimestamp = $this->parse8601 ($this->safe_string($order, 'LastMatchTime'));
+        $marketId = $this->safe_string($order, 'AssetPairId');
+        $symbol = $this->safe_symbol($marketId, $market);
+        $lastTradeTimestamp = $this->parse8601($this->safe_string($order, 'LastMatchTime'));
         $timestamp = null;
         if ((is_array($order) && array_key_exists('Registered', $order)) && ($order['Registered'])) {
-            $timestamp = $this->parse8601 ($order['Registered']);
+            $timestamp = $this->parse8601($order['Registered']);
         } else if ((is_array($order) && array_key_exists('CreatedAt', $order)) && ($order['CreatedAt'])) {
-            $timestamp = $this->parse8601 ($order['CreatedAt']);
+            $timestamp = $this->parse8601($order['CreatedAt']);
         }
-        $price = $this->safe_float($order, 'Price');
-        $amount = $this->safe_float($order, 'Volume');
-        $remaining = $this->safe_float($order, 'RemainingVolume');
-        $filled = $amount - $remaining;
-        $cost = $filled * $price;
+        $price = $this->safe_string($order, 'Price');
+        $side = null;
+        $amount = $this->safe_string($order, 'Volume');
+        $isAmountLessThanZero = Precise::string_lt($amount, '0');
+        if ($isAmountLessThanZero) {
+            $side = 'sell';
+            $amount = Precise::string_abs($amount);
+        } else {
+            $side = 'buy';
+        }
+        $remaining = Precise::string_abs($this->safe_string($order, 'RemainingVolume'));
         $id = $this->safe_string($order, 'Id');
-        return array(
+        return $this->safe_order(array(
             'info' => $order,
             'id' => $id,
+            'clientOrderId' => null,
             'timestamp' => $timestamp,
-            'datetime' => $this->iso8601 ($timestamp),
+            'datetime' => $this->iso8601($timestamp),
             'lastTradeTimestamp' => $lastTradeTimestamp,
             'symbol' => $symbol,
             'type' => null,
-            'side' => null,
+            'timeInForce' => null,
+            'postOnly' => null,
+            'side' => $side,
             'price' => $price,
-            'cost' => $cost,
+            'stopPrice' => null,
+            'cost' => null,
             'average' => null,
             'amount' => $amount,
-            'filled' => $filled,
+            'filled' => null,
             'remaining' => $remaining,
             'status' => $status,
             'fee' => null,
-        );
+            'trades' => null,
+        ), $market);
     }
 
-    public function fetch_order ($id, $symbol = null, $params = array ()) {
+    public function fetch_order($id, $symbol = null, $params = array ()) {
         $this->load_markets();
         $request = array(
             'id' => $id,
@@ -369,31 +568,31 @@ class lykke extends Exchange {
         return $this->parse_order($response);
     }
 
-    public function fetch_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
+    public function fetch_orders($symbol = null, $since = null, $limit = null, $params = array ()) {
         $this->load_markets();
         $response = $this->privateGetOrders ($params);
-        return $this->parse_orders($response, null, $since, $limit);
+        $market = null;
+        if ($symbol !== null) {
+            $market = $this->market($symbol);
+        }
+        return $this->parse_orders($response, $market, $since, $limit);
     }
 
-    public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
-        $this->load_markets();
+    public function fetch_open_orders($symbol = null, $since = null, $limit = null, $params = array ()) {
         $request = array(
             'status' => 'InOrderBook',
         );
-        $response = $this->privateGetOrders (array_merge($request, $params));
-        return $this->parse_orders($response, null, $since, $limit);
+        return $this->fetch_orders($symbol, $since, $limit, array_merge($request, $params));
     }
 
-    public function fetch_closed_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
-        $this->load_markets();
+    public function fetch_closed_orders($symbol = null, $since = null, $limit = null, $params = array ()) {
         $request = array(
             'status' => 'Matched',
         );
-        $response = $this->privateGetOrders (array_merge($request, $params));
-        return $this->parse_orders($response, null, $since, $limit);
+        return $this->fetch_orders($symbol, $since, $limit, array_merge($request, $params));
     }
 
-    public function fetch_order_book ($symbol, $limit = null, $params = array ()) {
+    public function fetch_order_book($symbol, $limit = null, $params = array ()) {
         $this->load_markets();
         $response = $this->publicGetOrderBooksAssetPairId (array_merge(array(
             'AssetPairId' => $this->market_id($symbol),
@@ -411,36 +610,36 @@ class lykke extends Exchange {
             } else {
                 $orderbook['asks'] = $this->array_concat($orderbook['asks'], $side['Prices']);
             }
-            $sideTimestamp = $this->parse8601 ($side['Timestamp']);
+            $sideTimestamp = $this->parse8601($side['Timestamp']);
             $timestamp = ($timestamp === null) ? $sideTimestamp : max ($timestamp, $sideTimestamp);
         }
-        return $this->parse_order_book($orderbook, $timestamp, 'bids', 'asks', 'Price', 'Volume');
+        return $this->parse_order_book($orderbook, $symbol, $timestamp, 'bids', 'asks', 'Price', 'Volume');
     }
 
-    public function parse_bid_ask ($bidask, $priceKey = 0, $amountKey = 1) {
-        $price = $this->safe_float($bidask, $priceKey);
-        $amount = $this->safe_float($bidask, $amountKey);
+    public function parse_bid_ask($bidask, $priceKey = 0, $amountKey = 1) {
+        $price = $this->safe_number($bidask, $priceKey);
+        $amount = $this->safe_number($bidask, $amountKey);
         if ($amount < 0) {
             $amount = -$amount;
         }
         return array( $price, $amount );
     }
 
-    public function sign ($path, $api = 'public', $method = 'GET', $params = array (), $headers = null, $body = null) {
+    public function sign($path, $api = 'public', $method = 'GET', $params = array (), $headers = null, $body = null) {
         $url = $this->urls['api'][$api] . '/' . $this->implode_params($path, $params);
-        $query = $this->omit ($params, $this->extract_params($path));
+        $query = $this->omit($params, $this->extract_params($path));
         if ($api === 'mobile') {
             if ($query) {
-                $url .= '?' . $this->urlencode ($query);
+                $url .= '?' . $this->urlencode($query);
             }
         } else if ($api === 'public') {
             if ($query) {
-                $url .= '?' . $this->urlencode ($query);
+                $url .= '?' . $this->urlencode($query);
             }
         } else if ($api === 'private') {
-            if ($method === 'GET') {
+            if (($method === 'GET') || ($method === 'DELETE')) {
                 if ($query) {
-                    $url .= '?' . $this->urlencode ($query);
+                    $url .= '?' . $this->urlencode($query);
                 }
             }
             $this->check_required_credentials();
@@ -451,7 +650,7 @@ class lykke extends Exchange {
             );
             if ($method === 'POST') {
                 if ($params) {
-                    $body = $this->json ($params);
+                    $body = $this->json($params);
                 }
             }
         }

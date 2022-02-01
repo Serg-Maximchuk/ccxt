@@ -2,14 +2,10 @@
 
 // ----------------------------------------------------------------------------
 
-const log       = require ('ololog')
-    , ansi      = require ('ansicolor').nice
-    , chai      = require ('chai')
-    , expect    = chai.expect
-    , assert    = chai.assert
+const assert = require ('assert')
     , testOrder = require ('./test.order.js')
 
-/*  ------------------------------------------------------------------------ */
+// ----------------------------------------------------------------------------
 
 module.exports = async (exchange, symbol) => {
 
@@ -17,16 +13,16 @@ module.exports = async (exchange, symbol) => {
 
         // log ('fetching open orders...')
 
-        let orders = await exchange.fetchOpenOrders (symbol)
+        const orders = await exchange.fetchOpenOrders (symbol)
 
         assert (orders instanceof Array)
 
-        log ('fetched', orders.length.toString ().green, 'open orders')
+        console.log ('fetched', orders.length, 'open orders')
 
-        let now = Date.now ()
+        const now = Date.now ()
 
         for (let i = 0; i < orders.length; i++) {
-            let order = orders[i]
+            const order = orders[i]
             testOrder (exchange, order, symbol, now)
             assert (order.status === 'open')
         }
@@ -35,6 +31,6 @@ module.exports = async (exchange, symbol) => {
 
     } else {
 
-        log ('fetching open orders not supported')
+        console.log ('fetching open orders not supported')
     }
 }

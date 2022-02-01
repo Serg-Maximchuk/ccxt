@@ -4,8 +4,8 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.async_support.base.exchange import Exchange
-import base64
 import hashlib
+from ccxt.base.precise import Precise
 
 
 class bl3p(Exchange):
@@ -14,20 +14,48 @@ class bl3p(Exchange):
         return self.deep_extend(super(bl3p, self).describe(), {
             'id': 'bl3p',
             'name': 'BL3P',
-            'countries': ['NL', 'EU'],  # Netherlands, EU
+            'countries': ['NL'],  # Netherlands
             'rateLimit': 1000,
             'version': '1',
             'comment': 'An exchange market by BitonicNL',
             'has': {
-                'CORS': False,
+                'CORS': None,
+                'spot': True,
+                'margin': False,
+                'swap': False,
+                'future': False,
+                'option': False,
+                'cancelOrder': True,
+                'createOrder': True,
+                'createReduceOnlyOrder': False,
+                'fetchBalance': True,
+                'fetchBorrowRate': False,
+                'fetchBorrowRateHistory': False,
+                'fetchBorrowRates': False,
+                'fetchBorrowRatesPerSymbol': False,
+                'fetchFundingHistory': False,
+                'fetchFundingRate': False,
+                'fetchFundingRateHistory': False,
+                'fetchFundingRates': False,
+                'fetchIndexOHLCV': False,
+                'fetchIsolatedPositions': False,
+                'fetchLeverage': False,
+                'fetchMarkOHLCV': False,
+                'fetchOrderBook': True,
+                'fetchPositions': False,
+                'fetchPositionsRisk': False,
+                'fetchPremiumIndexOHLCV': False,
+                'fetchTicker': True,
+                'fetchTrades': True,
+                'reduceMargin': False,
+                'setLeverage': False,
+                'setMarginMode': False,
+                'setPositionMode': False,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/28501752-60c21b82-6feb-11e7-818b-055ee6d0e754.jpg',
                 'api': 'https://api.bl3p.eu',
-                'www': [
-                    'https://bl3p.eu',
-                    'https://bitonic.nl',
-                ],
+                'www': 'https://bl3p.eu',  # 'https://bitonic.nl'
                 'doc': [
                     'https://github.com/BitonicNL/bl3p-api/tree/master/docs',
                     'https://bl3p.eu/api',
@@ -60,14 +88,12 @@ class bl3p(Exchange):
                 },
             },
             'markets': {
-                'BTC/EUR': {'id': 'BTCEUR', 'symbol': 'BTC/EUR', 'base': 'BTC', 'quote': 'EUR', 'baseId': 'BTC', 'quoteId': 'EUR', 'maker': 0.0025, 'taker': 0.0025},
-                'LTC/EUR': {'id': 'LTCEUR', 'symbol': 'LTC/EUR', 'base': 'LTC', 'quote': 'EUR', 'baseId': 'LTC', 'quoteId': 'EUR', 'maker': 0.0025, 'taker': 0.0025},
+                'BTC/EUR': {'id': 'BTCEUR', 'symbol': 'BTC/EUR', 'base': 'BTC', 'quote': 'EUR', 'baseId': 'BTC', 'quoteId': 'EUR', 'maker': 0.0025, 'taker': 0.0025, 'type': 'spot', 'spot': True},
+                'LTC/EUR': {'id': 'LTCEUR', 'symbol': 'LTC/EUR', 'base': 'LTC', 'quote': 'EUR', 'baseId': 'LTC', 'quoteId': 'EUR', 'maker': 0.0025, 'taker': 0.0025, 'type': 'spot', 'spot': True},
             },
         })
 
-    async def fetch_balance(self, params={}):
-        await self.load_markets()
-        response = await self.privatePostGENMKTMoneyInfo(params)
+    def parse_balance(self, response):
         data = self.safe_value(response, 'data', {})
         wallets = self.safe_value(data, 'wallets')
         result = {'info': data}
@@ -80,15 +106,22 @@ class bl3p(Exchange):
             available = self.safe_value(wallet, 'available', {})
             balance = self.safe_value(wallet, 'balance', {})
             account = self.account()
-            account['free'] = self.safe_float(available, 'value')
-            account['total'] = self.safe_float(balance, 'value')
+            account['free'] = self.safe_string(available, 'value')
+            account['total'] = self.safe_string(balance, 'value')
             result[code] = account
-        return self.parse_balance(result)
+        return self.safe_balance(result)
+
+    async def fetch_balance(self, params={}):
+        await self.load_markets()
+        response = await self.privatePostGENMKTMoneyInfo(params)
+        return self.parse_balance(response)
 
     def parse_bid_ask(self, bidask, priceKey=0, amountKey=1):
+        price = self.safe_number(bidask, priceKey)
+        size = self.safe_number(bidask, amountKey)
         return [
-            bidask[priceKey] / 100000.0,
-            bidask[amountKey] / 100000000.0,
+            price / 100000.0,
+            size / 100000000.0,
         ]
 
     async def fetch_order_book(self, symbol, limit=None, params={}):
@@ -98,24 +131,37 @@ class bl3p(Exchange):
         }
         response = await self.publicGetMarketOrderbook(self.extend(request, params))
         orderbook = self.safe_value(response, 'data')
-        return self.parse_order_book(orderbook, None, 'bids', 'asks', 'price_int', 'amount_int')
+        return self.parse_order_book(orderbook, symbol, None, 'bids', 'asks', 'price_int', 'amount_int')
 
-    async def fetch_ticker(self, symbol, params={}):
-        request = {
-            'market': self.market_id(symbol),
-        }
-        ticker = await self.publicGetMarketTicker(self.extend(request, params))
+    def parse_ticker(self, ticker, market=None):
+        #
+        # {
+        #     "currency":"BTC",
+        #     "last":32654.55595,
+        #     "bid":32552.3642,
+        #     "ask":32703.58231,
+        #     "high":33500,
+        #     "low":31943,
+        #     "timestamp":1643372789,
+        #     "volume":{
+        #         "24h":2.27372413,
+        #         "30d":320.79375456
+        #     }
+        # }
+        #
+        symbol = self.safe_symbol(None, market)
         timestamp = self.safe_timestamp(ticker, 'timestamp')
-        last = self.safe_float(ticker, 'last')
-        return {
+        last = self.safe_string(ticker, 'last')
+        volume = self.safe_value(ticker, 'volume', {})
+        return self.safe_ticker({
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': self.safe_float(ticker, 'high'),
-            'low': self.safe_float(ticker, 'low'),
-            'bid': self.safe_float(ticker, 'bid'),
+            'high': self.safe_string(ticker, 'high'),
+            'low': self.safe_string(ticker, 'low'),
+            'bid': self.safe_string(ticker, 'bid'),
             'bidVolume': None,
-            'ask': self.safe_float(ticker, 'ask'),
+            'ask': self.safe_string(ticker, 'ask'),
             'askVolume': None,
             'vwap': None,
             'open': None,
@@ -125,24 +171,44 @@ class bl3p(Exchange):
             'change': None,
             'percentage': None,
             'average': None,
-            'baseVolume': self.safe_float(ticker['volume'], '24h'),
+            'baseVolume': self.safe_string(volume, '24h'),
             'quoteVolume': None,
             'info': ticker,
+        }, market, False)
+
+    async def fetch_ticker(self, symbol, params={}):
+        market = self.market(symbol)
+        request = {
+            'market': market['id'],
         }
+        ticker = await self.publicGetMarketTicker(self.extend(request, params))
+        #
+        # {
+        #     "currency":"BTC",
+        #     "last":32654.55595,
+        #     "bid":32552.3642,
+        #     "ask":32703.58231,
+        #     "high":33500,
+        #     "low":31943,
+        #     "timestamp":1643372789,
+        #     "volume":{
+        #         "24h":2.27372413,
+        #         "30d":320.79375456
+        #     }
+        # }
+        #
+        return self.parse_ticker(ticker, market)
 
     def parse_trade(self, trade, market=None):
         id = self.safe_string(trade, 'trade_id')
         timestamp = self.safe_integer(trade, 'date')
-        price = self.safe_float(trade, 'price_int')
-        if price is not None:
-            price /= 100000.0
-        amount = self.safe_float(trade, 'amount_int')
-        if amount is not None:
-            amount /= 100000000.0
-        cost = None
-        if price is not None:
-            if amount is not None:
-                cost = amount * price
+        priceString = self.safe_string(trade, 'price_int')
+        priceString = Precise.string_div(priceString, '100000')
+        amountString = self.safe_string(trade, 'amount_int')
+        amountString = Precise.string_div(amountString, '100000000')
+        price = self.parse_number(priceString)
+        amount = self.parse_number(amountString)
+        cost = self.parse_number(Precise.string_mul(priceString, amountString))
         symbol = None
         if market is not None:
             symbol = market['symbol']
@@ -204,13 +270,13 @@ class bl3p(Exchange):
             self.check_required_credentials()
             nonce = self.nonce()
             body = self.urlencode(self.extend({'nonce': nonce}, query))
-            secret = base64.b64decode(self.secret)
+            secret = self.base64_to_binary(self.secret)
             # eslint-disable-next-line quotes
             auth = request + "\0" + body
             signature = self.hmac(self.encode(auth), secret, hashlib.sha512, 'base64')
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Rest-Key': self.apiKey,
-                'Rest-Sign': self.decode(signature),
+                'Rest-Sign': signature,
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
